@@ -1,51 +1,59 @@
 import streamlit as st
 import os
+import json
+from google.oauth2 import service_account
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaIoBaseUpload
 from PIL import Image, ImageEnhance
+import io
 
-# Configuração Base
-st.set_page_config(page_title="DOC-PRO Google Drive", layout="wide")
+# Configuração de Acesso
+if "GOOGLE_CREDENTIALS" in st.secrets:
+    info = json.loads(st.secrets["GOOGLE_CREDENTIALS"])
+    creds = service_account.Credentials.from_service_account_info(info)
+    drive_service = build('drive', 'v3', credentials=creds)
+else:
+    st.error("Configure as Credenciais no Streamlit/GitHub primeiro.")
 
-st.title("📂 Gestão Transportadora + Google Drive")
+st.set_page_config(page_title="DOC-PRO Transportadora", layout="wide")
 
-# --- ÁREA DE CONFIGURAÇÃO GOOGLE (SERÁ CONFIGURADA NO PRÓXIMO PASSO) ---
-st.sidebar.warning("⚠️ Conexão com Google Drive pendente")
+# Interface
+st.title("🚚 Sistema de Documentos Digital")
 
-aba = st.sidebar.radio("Navegação", ["Enviar Documentos", "Ver no Google Drive", "Melhorar Imagem (Editor)"])
+aba = st.sidebar.radio("Navegação", ["Enviar/Receber", "Editor de Imagem"])
 
-# --- FUNÇÃO DE TRATAMENTO ---
-def melhorar_imagem(img, nitidez, contraste, brilho):
-    img = ImageEnhance.Sharpness(img).enhance(nitidez)
-    img = ImageEnhance.Contrast(img).enhance(contraste)
-    img = ImageEnhance.Brightness(img).enhance(brilho)
-    return img
+if aba == "Enviar/Receber":
+    st.subheader("📤 Enviar para Google Drive")
+    arquivos = st.file_uploader("Selecione os documentos", accept_multiple_files=True)
+    
+    if arquivos:
+        for arq in arquivos:
+            file_metadata = {'name': arq.name}
+            media = MediaIoBaseUpload(io.BytesIO(arq.getbuffer()), mimetype=arq.type)
+            drive_service.files().create(body=file_metadata, media_body=media, fields='id').execute()
+            st.success(f"✅ {arq.name} enviado!")
+            
+            # Botão Zap rápido
+            st.markdown(f"[📲 Enviar aviso de {arq.name} via Zap](https://wa.me/?text=Documento+{arq.name}+enviado+para+o+Drive)")
 
-# --- ABA 1: ENVIO ---
-if aba == "Enviar Documentos":
-    st.header("📤 Enviar para o Google Drive")
-    upload = st.file_uploader("Selecione os arquivos", accept_multiple_files=True)
-    if upload:
-        # Aqui o código enviará direto para sua conta Google
-        st.success("Arquivos prontos para sincronização!")
-
-# --- ABA 2: LISTAGEM ---
-elif aba == "Ver no Google Drive":
-    st.header("📋 Arquivos na Nuvem")
-    st.info("Aqui aparecerão os arquivos salvos na sua nova conta Google.")
-    # Lista arquivos do Drive aqui
-
-# --- ABA 3: EDITOR ---
-elif aba == "Melhorar Imagem (Editor)":
-    st.header("🖼️ Ajustar Nitidez e Enquadramento")
-    foto = st.file_uploader("Suba a foto para editar", type=['jpg', 'png', 'jpeg'])
+elif aba == "Editor de Imagem":
+    st.subheader("🖼️ Melhorar Qualidade do Documento")
+    foto = st.file_uploader("Carregar imagem", type=['jpg', 'png', 'jpeg'])
     if foto:
         img = Image.open(foto)
         col1, col2 = st.columns(2)
         with col1:
-            n = st.slider("Nitidez", 0.0, 5.0, 1.0)
-            c = st.slider("Contraste", 0.0, 3.0, 1.2)
-            b = st.slider("Brilho", 0.0, 2.0, 1.0)
+            n = st.slider("Nitidez (Foco)", 1.0, 5.0, 2.0)
+            c = st.slider("Contraste (Fundo Branco)", 1.0, 3.0, 1.5)
+            b = st.slider("Brilho", 0.5, 2.0, 1.0)
         
-        img_editada = melhorar_imagem(img, n, c, b)
+        # Processamento
+        img_edit = ImageEnhance.Sharpness(img).enhance(n)
+        img_edit = ImageEnhance.Contrast(img_edit).enhance(c)
+        img_edit = ImageEnhance.Brightness(img_edit).enhance(b)
+        
         with col2:
-            st.image(img_editada, use_container_width=True)
-            st.download_button("Baixar Imagem Corrigida", data=foto, file_name="corrigido.jpg")
+            st.image(img_edit, caption="Resultado", use_container_width=True)
+            buf = io.BytesIO()
+            img_edit.save(buf, format="JPEG")
+            st.download_button("📥 Baixar Imagem Melhorada", data=buf.getvalue(), file_name="doc_corrigido.jpg")
