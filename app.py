@@ -1,5 +1,4 @@
 import streamlit as st
-import os
 import json
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
@@ -7,73 +6,67 @@ from googleapiclient.http import MediaIoBaseUpload
 from PIL import Image, ImageEnhance
 import io
 
-# Configuração de Acesso com correção de erro
+# Configuração de Acesso Simplificada
 try:
-    google_json_str = st.secrets["GOOGLE_JSON"]
-    info = json.loads(google_json_str)
-    creds = service_account.Credentials.from_service_account_info(info, scopes=['https://www.googleapis.com/auth/drive'])
+    cred_dict = {
+        "type": st.secrets["type"],
+        "project_id": st.secrets["project_id"],
+        "private_key_id": st.secrets["private_key_id"],
+        "private_key": st.secrets["private_key"].replace('\\n', '\n'),
+        "client_email": st.secrets["client_email"],
+        "client_id": st.secrets["client_id"],
+        "auth_uri": st.secrets["auth_uri"],
+        "token_uri": st.secrets["token_uri"],
+        "auth_provider_x509_cert_url": st.secrets["auth_provider_x509_cert_url"],
+        "client_x509_cert_url": st.secrets["client_x509_cert_url"]
+    }
+    creds = service_account.Credentials.from_service_account_info(cred_dict, scopes=['https://www.googleapis.com/auth/drive'])
     drive_service = build('drive', 'v3', credentials=creds)
 except Exception as e:
-    st.error(f"Erro nas Credenciais: Verifique os Secrets no Streamlit. Erro: {e}")
+    st.error(f"Erro na configuração: {e}")
     st.stop()
 
 st.set_page_config(page_title="DOC-PRO Transportadora", layout="wide")
 
-st.title("🚚 Gestão de Documentos Digital")
+st.title("🚚 Sistema de Documentos")
 
-aba = st.sidebar.radio("Navegação", ["📦 Receber e Enviar", "📂 Gestão do Drive", "🖼️ Melhorar Imagem"])
+menu = st.sidebar.radio("Navegação", ["📦 Enviar/Receber", "📂 Gestão do Drive", "🖼️ Editor de Nitidez"])
 
-# --- ABA 1: RECEBER E ENVIAR ---
-if aba == "📦 Receber e Enviar":
-    st.subheader("📤 Envio Rápido")
-    arquivos = st.file_uploader("Selecione os documentos", accept_multiple_files=True)
-    
-    if arquivos:
-        for arq in arquivos:
+if menu == "📦 Enviar/Receber":
+    st.subheader("📤 Enviar Documentos")
+    uploads = st.file_uploader("Selecione os arquivos", accept_multiple_files=True)
+    if uploads:
+        for arq in uploads:
             with st.spinner(f"Enviando {arq.name}..."):
-                file_metadata = {'name': arq.name}
+                meta = {'name': arq.name}
                 media = MediaIoBaseUpload(io.BytesIO(arq.getbuffer()), mimetype=arq.type)
-                drive_service.files().create(body=file_metadata, media_body=media, fields='id').execute()
-                st.success(f"✅ {arq.name} salvo no Google Drive!")
-                
-                # Link WhatsApp
-                msg = f"Documento enviado para o Drive: {arq.name}"
-                st.markdown(f"[📲 Avisar no WhatsApp](https://wa.me/?text={msg})")
+                drive_service.files().create(body=meta, media_body=media).execute()
+                st.success(f"✅ {arq.name} salvo!")
+                st.markdown(f"[📲 Enviar via Zap](https://wa.me/?text=Documento+{arq.name}+recebido)")
 
-# --- ABA 2: GESTÃO DO DRIVE ---
-elif aba == "📂 Gestão do Drive":
-    st.subheader("📋 Arquivos no Google Drive")
-    results = drive_service.files().list(pageSize=20, fields="files(id, name, mimeType)").execute()
-    items = results.get('files', [])
+elif menu == "📂 Gestão do Drive":
+    st.subheader("📋 Arquivos na Nuvem")
+    res = drive_service.files().list(pageSize=15, fields="files(id, name)").execute()
+    arquivos = res.get('files', [])
+    for a in arquivos:
+        col1, col2 = st.columns([4, 1])
+        col1.write(f"📄 {a['name']}")
+        if col2.button("🗑️ Apagar", key=a['id']):
+            drive_service.files().delete(fileId=a['id']).execute()
+            st.rerun()
 
-    if not items:
-        st.info("Nenhum arquivo encontrado no Drive.")
-    else:
-        for item in items:
-            col1, col2 = st.columns([4, 1])
-            col1.write(f"📄 {item['name']}")
-            if col2.button("🗑️ Excluir", key=item['id']):
-                drive_service.files().delete(fileId=item['id']).execute()
-                st.rerun()
-
-# --- ABA 3: EDITOR ---
-elif aba == "🖼️ Melhorar Imagem":
-    st.subheader("🖼️ Editor de Nitidez (Fotos Ruins)")
-    foto = st.file_uploader("Carregar foto do celular", type=['jpg', 'png', 'jpeg'])
+elif menu == "🖼️ Editor de Nitidez":
+    st.subheader("🖼️ Melhorar Documento Embaçado")
+    foto = st.file_uploader("Suba a foto", type=['jpg', 'jpeg', 'png'])
     if foto:
         img = Image.open(foto)
-        col1, col2 = st.columns(2)
-        with col1:
-            n = st.slider("Aumentar Nitidez", 1.0, 5.0, 2.0)
-            c = st.slider("Melhorar Contraste", 1.0, 3.0, 1.5)
-            b = st.slider("Ajustar Brilho", 0.5, 2.0, 1.0)
+        n = st.slider("Nitidez", 1.0, 5.0, 2.5)
+        c = st.slider("Contraste", 1.0, 3.0, 1.5)
         
         img_edit = ImageEnhance.Sharpness(img).enhance(n)
         img_edit = ImageEnhance.Contrast(img_edit).enhance(c)
-        img_edit = ImageEnhance.Brightness(img_edit).enhance(b)
         
-        with col2:
-            st.image(img_edit, use_container_width=True)
-            buf = io.BytesIO()
-            img_edit.save(buf, format="JPEG")
-            st.download_button("📥 Baixar para enviar", data=buf.getvalue(), file_name="corrigido.jpg")
+        st.image(img_edit, use_container_width=True)
+        buf = io.BytesIO()
+        img_edit.save(buf, format="JPEG")
+        st.download_button("📥 Baixar Imagem Limpa", data=buf.getvalue(), file_name="corrigido.jpg")
